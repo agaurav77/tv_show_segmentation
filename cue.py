@@ -4,8 +4,9 @@ import sys
 from darknet import Darknet
 from imageio import imsave
 import os
+import glob
 import matplotlib.pyplot as plt
-import pyAudioAnalysis
+from pyAudioAnalysis import audioSegmentation
 
 class Cue:
 
@@ -97,10 +98,66 @@ class Cue:
       max_hit = max(max_hit, self._match_template(file, frame))
     return max_hit >= 6
 
+  # (internal)
+  # train and generate hmm model for speech music discrimination
+  def _train_hmm(self):
+    audioSegmentation.trainHMM_fromDir(
+      "gtzan/", "weights/hmm", 1.0, 1.0)
+    print('training complete, model at weights/hmm')
 
+  # run speech or audio segmentation on audio clip from
+  # using pyAudioAnalysis; assuming clip is already clipped
+  def audio_classify(self, clip):
+    if not os.path.isfile("weights/hmm"):
+      print("pretrained model doesnt exist, training may take few minutes")
+      self._train_hmm()
+    else:
+      print("pretrained model exists, using that")
+    flags, classes, _, _ = audioSegmentation.hmmSegmentation(
+      clip.to_soundarray(fps=44100), "weights/hmm")
+    # classification is per second, lets group sections
+    counts = []
+    prev_item = None
+    first_item = None
+    for item in flags:
+      if prev_item == None:
+        counts.append(1)
+        prev_item = item
+        first_item = item
+      elif item == prev_item:
+        counts[-1] += 1
+      elif item != prev_item:
+        counts.append(1)
+        prev_item = item
+    counts = np.cumsum(np.array(counts))
+    durations = [[], []]
+    next_item = first_item
+    for i in range(len(counts)):
+      if i == 0:
+        durations[next_item].append([0, counts[i]])
+      else:
+        durations[next_item].append([counts[i-1], counts[i]])
+      next_item = (next_item+1)%2
+    return dict(zip(classes, durations))
 
 class Util:
 
   @staticmethod
   def duration(hours, mins, secs):
     return hours*60*60+mins*60+secs
+
+  @staticmethod
+  def inverse_duration(num):
+    secs = num%60
+    num //= 60
+    mins = num%60
+    num //= 60
+    return num, mins, secs
+
+  @staticmethod
+  def show_predictions(res, c):
+    # just show when music plays, rest is speech
+    for item in res[c]:
+      a1, a2, a3 = Util.inverse_duration(item[0])
+      b1, b2, b3 = Util.inverse_duration(item[1])
+      print("%d,%d,%d to %d,%d,%d" % (a1, a2, a3, b1, b2, b3))
