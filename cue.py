@@ -5,6 +5,7 @@ from darknet import Darknet
 from imageio import imsave
 import os
 import matplotlib.pyplot as plt
+import pyAudioAnalysis
 
 class Cue:
 
@@ -95,6 +96,8 @@ class Cue:
     for file in files:
       max_hit = max(max_hit, self._match_template(file, frame))
     return max_hit >= 6
+
+
 
 class Util:
 
