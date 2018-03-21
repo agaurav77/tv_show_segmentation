@@ -7,11 +7,15 @@ import os
 import glob
 import matplotlib.pyplot as plt
 from pyAudioAnalysis import audioSegmentation
+from moviepy.editor import *
+import string
 
 class Cue:
 
-  def __init__(self):
+  def __init__(self, ocr_lines, subs_lines):
     self.d = Darknet()
+    self.ocr = self._construct_wordmap(ocr_lines)
+    self.subs = self._construct_wordmap(subs_lines)
 
   # (internal)
   # return predictions using darknet.py that uses tiny yolo weights
@@ -107,6 +111,11 @@ class Cue:
 
   # run speech or audio segmentation on audio clip from
   # using pyAudioAnalysis; assuming clip is already clipped
+  # (usage)
+  # start = Util.duration(2, 0, 0)
+  # end = Util.duration(2, 10, 0)
+  # clipped_audio = audio_clip.subclip(start, end)
+  # results = cues.audio_classify(clipped_audio)
   def audio_classify(self, clip):
     if not os.path.isfile("weights/hmm"):
       print("pretrained model doesnt exist, training may take few minutes")
@@ -140,6 +149,38 @@ class Cue:
       next_item = (next_item+1)%2
     return dict(zip(classes, durations))
 
+  # go through all the lines and create a word based map
+  # for simpler searching
+  def _construct_wordmap(self, lines):
+    wordmap = {}
+    for line in lines:
+      segs = line.split('|')
+      if len(segs) > 2 and Util.is_timestamp(segs[0]) \
+          and Util.is_timestamp(segs[1]):
+        words = [Util.keep_chars(w) for w in segs[-1].split()]
+        num1 = Util.inverse_duration2(segs[0])
+        num2 = Util.inverse_duration2(segs[1])
+        for word in words:
+          if word in wordmap:
+            wordmap[word].append((num1, num2))
+          else:
+            wordmap[word] = [(num1, num2)]
+    return wordmap
+
+  # return times where these words simultaneously appear
+  # search in 'subtitle' or 'ocr'
+  # (usage)
+  # cues.search_words(['FAR', 'WE', 'HAVE'])
+  def search_words(self, words, hash='subtitle'):
+    h = self.subs if hash == 'subtitle' else self.ocr
+    matches = []
+    for word in words:
+      if word not in h:
+        return []
+      else:
+        matches.append(set(h[word]))
+    return list(set.intersection(*matches))
+
 class Util:
 
   @staticmethod
@@ -154,6 +195,40 @@ class Util:
     num //= 60
     return num, mins, secs
 
+  # tell if it is a subtitle or ocr type number
+  @staticmethod
+  def is_timestamp(s):
+    isnumeric = False
+    try:
+      n = float(s)
+    except:
+      return False
+    else:
+      return len(s) == 18
+
+  # figure out duration from subtitle or ocr number
+  @staticmethod
+  def inverse_duration2(num):
+    num = float(num)
+    secs = num%100
+    num //= 100
+    mins = num%100
+    num //= 100
+    hrs = num%100
+    return hrs, mins, secs
+
+  @staticmethod
+  def keep_chars(w):
+    new_w = ''
+    for c in w:
+      if c in string.ascii_uppercase:
+        new_w += c
+    return new_w
+
+  # show the results from Cue.audio_classify
+  # arguments are results and class whose durations are to be shown
+  # (usage)
+  # Util.show_predictions(results, 'music')
   @staticmethod
   def show_predictions(res, c):
     # just show when music plays, rest is speech
@@ -161,3 +236,14 @@ class Util:
       a1, a2, a3 = Util.inverse_duration(item[0])
       b1, b2, b3 = Util.inverse_duration(item[1])
       print("%d,%d,%d to %d,%d,%d" % (a1, a2, a3, b1, b2, b3))
+
+  # get data/name video, subtitle and ocr
+  @staticmethod
+  def get_clip_data(name):
+    clip = VideoFileClip('vdata/%s.mp4' % (name))
+    audio_clip = AudioFileClip('vdata/%s.mp4' % (name))
+    ocr_f = open('vdata/%s.ocr' % (name))
+    subtitle_f = open('vdata/%s.txt3' % (name))
+    ocr = [line.strip() for line in ocr_f.readlines()]
+    subtitle = [line.strip() for line in subtitle_f.readlines()]
+    return clip, audio_clip, ocr, subtitle
